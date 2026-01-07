@@ -84,6 +84,12 @@ def merge_product_master(df, pm_df):
         copy=False
     )
     
+    merged_df["CP"] = pd.to_numeric(merged_df["CP"], errors="coerce")
+    merged_df["Quantity"] = pd.to_numeric(merged_df["Quantity"], errors="coerce")
+
+    # ✅ NEW COLUMN
+    merged_df["CP As Per Qty"] = merged_df["CP"] * merged_df["Quantity"]
+    
     return merged_df
 
 def create_brand_pivot(df):
