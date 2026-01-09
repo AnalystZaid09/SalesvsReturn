@@ -12,6 +12,9 @@ st.set_page_config(
     layout="wide"
 )
 
+# Set configuration at the top
+st.set_option("server.fileWatcherType", "none")
+
 # Custom CSS
 st.markdown("""
     <style>
@@ -233,23 +236,24 @@ def create_final_summary(brand_qty_pivot, brand_fba_pivot, brand_seller_pivot):
     
     return result
 
-def create_download_button(df, filename, button_text="📥 Download Excel"):
-    """Create a download button for dataframe"""
+@st.cache_data
+def convert_df_to_excel(df):
+    """Convert dataframe to excel bytes with caching"""
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='Sheet1')
+    return output.getvalue()
 
-    excel_data = output.getvalue()
-
-    # Store bytes in session state to prevent duplicates on rerun
-    st.session_state[filename] = excel_data
+def create_download_button(df, filename, button_text="📥 Download Excel"):
+    """Create a download button for dataframe"""
+    excel_data = convert_df_to_excel(df)
 
     st.download_button(
         label=button_text,
-        data=st.session_state[filename],
+        data=excel_data,
         file_name=filename,
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        width="stretch"
+        use_container_width=True
     )
 
 
@@ -304,11 +308,9 @@ with col2:
         key='product_master'
     )
     
-st.config.set_option("server.fileWatcherType", "none")
-
 # Process Button
 st.markdown("---")
-process_button = st.button("🚀 Process Data", width="stretch", type="primary")
+process_button = st.button("🚀 Process Data", use_container_width=True, type="primary")
 
 if process_button:
     if not (b2b_files or b2c_files):
@@ -452,32 +454,32 @@ if st.session_state.processed:
     
     with tab1:
         st.subheader("Combined Transaction Data")
-        st.dataframe(results['combined_df'].head(100), width="stretch")
+        st.dataframe(results['combined_df'].head(100), use_container_width=True)
         create_download_button(results['combined_df'], "combined_data_report.xlsx")
     
     with tab2:
         col1, col2 = st.columns(2)
         with col1:
             st.subheader("Brand Quantity Pivot")
-            st.dataframe(results['brand_qty_pivot'], width="stretch")
+            st.dataframe(results['brand_qty_pivot'], use_container_width=True)
             create_download_button(results['brand_qty_pivot'], "brand_quantity_pivot.xlsx")
         
         with col2:
             st.subheader("Brand Final Summary (with Returns)")
-            st.dataframe(results['brand_final'], width="stretch")
+            st.dataframe(results['brand_final'], use_container_width=True)
             create_download_button(results['brand_final'], "brand_final_summary.xlsx")
     
     with tab3:
         col1, col2 = st.columns(2)
         with col1:
             st.subheader("ASIN Quantity Pivot")
-            st.dataframe(results['asin_qty_pivot'], width="stretch")
+            st.dataframe(results['asin_qty_pivot'], use_container_width=True)
             create_download_button(results['asin_qty_pivot'], "asin_quantity_pivot.xlsx")
         
         with col2:
             if 'asin_final' in results and results['asin_final'] is not None:
                 st.subheader("ASIN Final Summary (with Returns)")
-                st.dataframe(results['asin_final'], width="stretch")
+                st.dataframe(results['asin_final'], use_container_width=True)
                 create_download_button(results['asin_final'], "asin_final_summary.xlsx")
     
     with tab4:
@@ -485,12 +487,12 @@ if st.session_state.processed:
             col1, col2 = st.columns(2)
             with col1:
                 st.subheader("Seller Flex - Brand Pivot")
-                st.dataframe(results['seller_flex_brand'],width="stretch")
+                st.dataframe(results['seller_flex_brand'],use_container_width=True)
                 create_download_button(results['seller_flex_brand'], "seller_flex_brand.xlsx")
             
             with col2:
                 st.subheader("Seller Flex - ASIN Pivot")
-                st.dataframe(results['seller_flex_asin'], width="stretch")
+                st.dataframe(results['seller_flex_asin'], use_container_width=True)
                 create_download_button(results['seller_flex_asin'], "seller_flex_asin.xlsx")
         else:
             st.info("No Seller Flex data uploaded")
@@ -500,12 +502,12 @@ if st.session_state.processed:
             col1, col2 = st.columns(2)
             with col1:
                 st.subheader("FBA Return - Brand Pivot")
-                st.dataframe(results['fba_return_brand'], width="stretch")
+                st.dataframe(results['fba_return_brand'], use_container_width=True)
                 create_download_button(results['fba_return_brand'], "fba_return_brand.xlsx")
             
             with col2:
                 st.subheader("FBA Return - ASIN Pivot")
-                st.dataframe(results['fba_return_asin'], width="stretch")
+                st.dataframe(results['fba_return_asin'], use_container_width=True)
                 create_download_button(results['fba_return_asin'], "fba_return_asin.xlsx")
         else:
             st.info("No FBA Return data uploaded")
@@ -514,21 +516,22 @@ if st.session_state.processed:
     st.markdown("---")
     st.subheader("📥 Download All Reports")
     
-    if st.button("Download All Reports as ZIP", width="stretch"):
+    if st.button("Download All Reports as ZIP", use_container_width=True):
         # Create ZIP file with all reports
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
             for name, df in results.items():
                 if df is not None and isinstance(df, pd.DataFrame):
-                    excel_buffer = io.BytesIO()
-                    df.to_excel(excel_buffer, index=False)
-                    zip_file.writestr(f"{name}.xlsx", excel_buffer.getvalue())
+                    # Use the cached converter for each file in the ZIP too
+                    excel_bytes = convert_df_to_excel(df)
+                    zip_file.writestr(f"{name}.xlsx", excel_bytes)
         
         st.download_button(
             label="📦 Download ZIP",
             data=zip_buffer.getvalue(),
             file_name="all_reports.zip",
-            mime="application/zip"
+            mime="application/zip",
+            use_container_width=True
         )
 
 # Footer
