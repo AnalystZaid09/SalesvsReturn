@@ -59,6 +59,16 @@ def read_zip_files(zip_files):
         return pd.concat(all_data, ignore_index=True, copy=False)
     return pd.DataFrame()
 
+def remove_byte_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop columns that contain raw bytes (Arrow cannot serialize them)"""
+    for col in df.columns:
+        if df[col].dtype == object:
+            sample = df[col].dropna().head(1)
+            if not sample.empty and isinstance(sample.iloc[0], (bytes, bytearray)):
+                df = df.drop(columns=[col])
+    return df
+
+
 def process_combined_data(combined_df):
     """Filter and clean combined data"""
     # Filter for Shipment transactions only (vectorized operation)
@@ -228,16 +238,20 @@ def create_download_button(df, filename, button_text="📥 Download Excel"):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='Sheet1')
-    
+
     excel_data = output.getvalue()
-    
+
+    # Store bytes in session state to prevent duplicates on rerun
+    st.session_state[filename] = excel_data
+
     st.download_button(
         label=button_text,
-        data=excel_data,
+        data=st.session_state[filename],
         file_name=filename,
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True
     )
+
 
 # Main App
 st.markdown('<h1 class="main-header">📊 Sales vs Return Data Analyzer</h1>', unsafe_allow_html=True)
@@ -309,12 +323,13 @@ if process_button:
                 else:
                     # Process combined data
                     combined_df = process_combined_data(combined_df)
-                    
+                    combined_df = remove_byte_columns(combined_df)
+
                     # Load product master
                     if product_master_file:
                         pm_df = pd.read_excel(product_master_file)
                         combined_df = merge_product_master(combined_df, pm_df)
-                    
+                        
                     # Create pivots
                     brand_qty_pivot = create_brand_pivot(combined_df)
                     asin_qty_pivot = create_asin_pivot(combined_df)
@@ -327,6 +342,7 @@ if process_button:
                     if seller_flex_file and product_master_file:
                         seller_flex_df = pd.read_csv(seller_flex_file)
                         seller_flex_df = process_seller_flex(seller_flex_df, pm_df)
+                        seller_flex_df = remove_byte_columns(seller_flex_df)
                         
                         seller_flex_brand = seller_flex_df.pivot_table(
                             index="Brand",
@@ -348,7 +364,8 @@ if process_button:
                     if fba_return_file and product_master_file:
                         fba_return_df = pd.read_csv(fba_return_file)
                         fba_return_df = process_fba_return(fba_return_df, pm_df)
-                        
+                        fba_return_df = remove_byte_columns(fba_return_df)
+
                         fba_return_brand = fba_return_df.pivot_table(
                             index="Brand",
                             values="quantity",
