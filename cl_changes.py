@@ -249,7 +249,7 @@ def create_download_button(df, filename, button_text="📥 Download Excel"):
         data=st.session_state[filename],
         file_name=filename,
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True
+        width="stretch"
     )
 
 
@@ -303,10 +303,12 @@ with col2:
         type=['xlsx', 'xls'],
         key='product_master'
     )
+    
+st.config.set_option("server.fileWatcherType", "none")
 
 # Process Button
 st.markdown("---")
-process_button = st.button("🚀 Process Data", use_container_width=True, type="primary")
+process_button = st.button("🚀 Process Data", width="stretch", type="primary")
 
 if process_button:
     if not (b2b_files or b2c_files):
@@ -414,7 +416,7 @@ if process_button:
                     }
                     st.session_state.processed = True
                     st.success("✅ Data processed successfully!")
-                    st.rerun()
+                    # st.rerun()
                     
             except Exception as e:
                 st.error(f"An error occurred: {str(e)}")
@@ -450,32 +452,32 @@ if st.session_state.processed:
     
     with tab1:
         st.subheader("Combined Transaction Data")
-        st.dataframe(results['combined_df'].head(100), use_container_width=True)
+        st.dataframe(results['combined_df'].head(100), width="stretch")
         create_download_button(results['combined_df'], "combined_data_report.xlsx")
     
     with tab2:
         col1, col2 = st.columns(2)
         with col1:
             st.subheader("Brand Quantity Pivot")
-            st.dataframe(results['brand_qty_pivot'], use_container_width=True)
+            st.dataframe(results['brand_qty_pivot'], width="stretch")
             create_download_button(results['brand_qty_pivot'], "brand_quantity_pivot.xlsx")
         
         with col2:
             st.subheader("Brand Final Summary (with Returns)")
-            st.dataframe(results['brand_final'], use_container_width=True)
+            st.dataframe(results['brand_final'], width="stretch")
             create_download_button(results['brand_final'], "brand_final_summary.xlsx")
     
     with tab3:
         col1, col2 = st.columns(2)
         with col1:
             st.subheader("ASIN Quantity Pivot")
-            st.dataframe(results['asin_qty_pivot'], use_container_width=True)
+            st.dataframe(results['asin_qty_pivot'], width="stretch")
             create_download_button(results['asin_qty_pivot'], "asin_quantity_pivot.xlsx")
         
         with col2:
             if 'asin_final' in results and results['asin_final'] is not None:
                 st.subheader("ASIN Final Summary (with Returns)")
-                st.dataframe(results['asin_final'], use_container_width=True)
+                st.dataframe(results['asin_final'], width="stretch")
                 create_download_button(results['asin_final'], "asin_final_summary.xlsx")
     
     with tab4:
@@ -483,12 +485,12 @@ if st.session_state.processed:
             col1, col2 = st.columns(2)
             with col1:
                 st.subheader("Seller Flex - Brand Pivot")
-                st.dataframe(results['seller_flex_brand'], use_container_width=True)
+                st.dataframe(results['seller_flex_brand'],width="stretch")
                 create_download_button(results['seller_flex_brand'], "seller_flex_brand.xlsx")
             
             with col2:
                 st.subheader("Seller Flex - ASIN Pivot")
-                st.dataframe(results['seller_flex_asin'], use_container_width=True)
+                st.dataframe(results['seller_flex_asin'], width="stretch")
                 create_download_button(results['seller_flex_asin'], "seller_flex_asin.xlsx")
         else:
             st.info("No Seller Flex data uploaded")
@@ -498,12 +500,12 @@ if st.session_state.processed:
             col1, col2 = st.columns(2)
             with col1:
                 st.subheader("FBA Return - Brand Pivot")
-                st.dataframe(results['fba_return_brand'], use_container_width=True)
+                st.dataframe(results['fba_return_brand'], width="stretch")
                 create_download_button(results['fba_return_brand'], "fba_return_brand.xlsx")
             
             with col2:
                 st.subheader("FBA Return - ASIN Pivot")
-                st.dataframe(results['fba_return_asin'], use_container_width=True)
+                st.dataframe(results['fba_return_asin'], width="stretch")
                 create_download_button(results['fba_return_asin'], "fba_return_asin.xlsx")
         else:
             st.info("No FBA Return data uploaded")
@@ -512,7 +514,7 @@ if st.session_state.processed:
     st.markdown("---")
     st.subheader("📥 Download All Reports")
     
-    if st.button("Download All Reports as ZIP", use_container_width=True):
+    if st.button("Download All Reports as ZIP", width="stretch"):
         # Create ZIP file with all reports
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
