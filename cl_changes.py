@@ -79,6 +79,10 @@ def process_combined_data(combined_df):
     combined_df["Invoice Amount"] = pd.to_numeric(combined_df["Invoice Amount"], errors="coerce")
     combined_df = combined_df[combined_df["Invoice Amount"] != 0]
     
+    # Remove Return Type if exists to keep report clean
+    if "Return Type" in combined_df.columns:
+        combined_df = combined_df.drop(columns=["Return Type"])
+    
     return combined_df
 
 def merge_product_master(df, pm_df):
@@ -178,17 +182,21 @@ def process_seller_flex(df, pm_df):
     ]
     df = df.drop(columns=cols_to_remove, errors="ignore")
     
-    # Create combine column (vectorized)
+    # Create combine column for duplicate detection (without Return Type)
     df["Combine"] = df["Customer Order ID"].astype(str).str.strip() + df["ASIN"].astype(str).str.strip()
     
     # Remove duplicates
-    df = df.drop_duplicates(keep='first')
+    df = df.drop_duplicates(subset=["Combine"], keep='first')
     
     # Merge with product master
     pm_cols = ["ASIN", "Brand", "Brand Manager", "Vendor SKU Codes", "CP"]
     pm_clean = pm_df[pm_cols].drop_duplicates(subset=["ASIN"]).copy()
     
     df = df.merge(pm_clean, left_on="ASIN", right_on="ASIN", how="left", copy=False)
+    
+    # Cleanup: Remove Return Type but keep temporary Combine column as requested
+    cols_to_drop = ["Return Type"]
+    df = df.drop(columns=[c for c in cols_to_drop if c in df.columns], errors="ignore")
     
     return df
 
@@ -198,6 +206,10 @@ def process_fba_return(df, pm_df):
     pm_clean = pm_df[pm_cols].drop_duplicates(subset=["ASIN"]).copy()
     
     df = df.merge(pm_clean, left_on="asin", right_on="ASIN", how="left", copy=False)
+    
+    # Remove Return Type if exists
+    if "Return Type" in df.columns:
+        df = df.drop(columns=["Return Type"])
     
     return df
 
