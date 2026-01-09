@@ -12,9 +12,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# Set configuration at the top
-st.set_option("server.fileWatcherType", "none")
-
 # Custom CSS
 st.markdown("""
     <style>
