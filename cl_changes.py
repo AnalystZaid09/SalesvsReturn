@@ -59,6 +59,51 @@ def read_zip_files(zip_files):
         return pd.concat(all_data, ignore_index=True, copy=False)
     return pd.DataFrame()
 
+def add_grand_total(df):
+    """Add a Grand Total row to the dataframe for numeric columns"""
+    if df is None or df.empty:
+        return df
+    
+    # Identify numeric columns
+    # We exclude columns that should not be summed even if numeric (like ASIN if it's all digits, though unlikely)
+    exclude_cols = ['ASIN', 'Asin', 'asin', 'CP'] # CP (unit cost) shouldn't be summed
+    numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+    numeric_cols = [col for col in numeric_cols if col not in exclude_cols]
+    
+    if not numeric_cols:
+        return df
+        
+    # Create total row
+    total_row = {}
+    for col in df.columns:
+        if col in numeric_cols:
+            if col == "Return In %":
+                total_row[col] = 0 # Placeholder
+            else:
+                total_row[col] = df[col].sum()
+        else:
+            total_row[col] = "" # Empty for non-numeric
+            
+    # Set Grand Total label in the first column
+    first_col = df.columns[0]
+    total_row[first_col] = "Grand Total"
+    
+    # Recalculate Return In % for the total row if possible
+    if "Return In %" in df.columns:
+        qty_col = next((c for c in ["Quantity", "quantity", "Units"] if c in df.columns), None)
+        ret_col = next((c for c in ["Total Return", "quantity", "Units", "FBA Return", "Seller Flex"] if c in df.columns and c != qty_col), None)
+        
+        # Specific check for final summary reports
+        qty_val = total_row.get("Quantity") or total_row.get("quantity") or total_row.get("Units")
+        ret_val = total_row.get("Total Return")
+        
+        if qty_val and ret_val and qty_val > 0:
+            total_row["Return In %"] = round((ret_val / qty_val) * 100, 2)
+        elif "Return In %" in numeric_cols:
+             total_row["Return In %"] = 0 # Cannot sum percentages
+
+    return pd.concat([df, pd.DataFrame([total_row])], ignore_index=True)
+
 def remove_byte_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Drop columns that contain raw bytes (Arrow cannot serialize them)"""
     for col in df.columns:
@@ -411,6 +456,33 @@ if process_button:
                     else:
                         asin_final = asin_qty_pivot
                     
+                    # Calculate metrics before adding Grand Totals
+                    total_records = len(combined_df)
+                    total_brands = len(brand_qty_pivot)
+                    total_asins = len(asin_qty_pivot)
+                    total_sf_returns = len(seller_flex_df) if seller_flex_df is not None else 0
+
+                    # Add Grand Totals to all dataframes
+                    combined_df = add_grand_total(combined_df)
+                    brand_qty_pivot = add_grand_total(brand_qty_pivot)
+                    asin_qty_pivot = add_grand_total(asin_qty_pivot)
+                    brand_final = add_grand_total(brand_final)
+                    asin_final = add_grand_total(asin_final)
+                    
+                    if seller_flex_df is not None:
+                        seller_flex_df = add_grand_total(seller_flex_df)
+                    if seller_flex_brand is not None:
+                        seller_flex_brand = add_grand_total(seller_flex_brand)
+                    if seller_flex_asin is not None:
+                        seller_flex_asin = add_grand_total(seller_flex_asin)
+                    
+                    if fba_return_df is not None:
+                        fba_return_df = add_grand_total(fba_return_df)
+                    if fba_return_brand is not None:
+                        fba_return_brand = add_grand_total(fba_return_brand)
+                    if fba_return_asin is not None:
+                        fba_return_asin = add_grand_total(fba_return_asin)
+
                     # Store results
                     st.session_state.results = {
                         'combined_df': combined_df,
@@ -423,7 +495,13 @@ if process_button:
                         'fba_return_df': fba_return_df,
                         'fba_return_brand': fba_return_brand,
                         'fba_return_asin': fba_return_asin,
-                        'brand_final': brand_final
+                        'brand_final': brand_final,
+                        'metrics': {
+                            'total_records': total_records,
+                            'total_brands': total_brands,
+                            'total_asins': total_asins,
+                            'total_sf_returns': total_sf_returns
+                        }
                     }
                     st.session_state.processed = True
                     st.success("✅ Data processed successfully!")
@@ -443,14 +521,13 @@ if st.session_state.processed:
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        st.metric("Total Records", f"{len(results['combined_df']):,}")
+        st.metric("Total Records", f"{results['metrics']['total_records']:,}")
     with col2:
-        st.metric("Total Brands", f"{len(results['brand_qty_pivot']):,}")
+        st.metric("Total Brands", f"{results['metrics']['total_brands']:,}")
     with col3:
-        st.metric("Total ASINs", f"{len(results['asin_qty_pivot']):,}")
+        st.metric("Total ASINs", f"{results['metrics']['total_asins']:,}")
     with col4:
-        if results['seller_flex_df'] is not None:
-            st.metric("Seller Flex Returns", f"{len(results['seller_flex_df']):,}")
+        st.metric("Seller Flex Returns", f"{results['metrics']['total_sf_returns']:,}")
     
     # Tabs for different reports
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
@@ -493,6 +570,10 @@ if st.session_state.processed:
     
     with tab4:
         if results['seller_flex_df'] is not None:
+            st.subheader("Raw Seller Flex Data")
+            st.dataframe(results['seller_flex_df'].head(100), use_container_width=True)
+            create_download_button(results['seller_flex_df'], "seller_flex_raw_data.xlsx")
+            
             col1, col2 = st.columns(2)
             with col1:
                 st.subheader("Seller Flex - Brand Pivot")
@@ -508,6 +589,10 @@ if st.session_state.processed:
     
     with tab5:
         if results['fba_return_df'] is not None:
+            st.subheader("Raw FBA Return Data")
+            st.dataframe(results['fba_return_df'].head(100), use_container_width=True)
+            create_download_button(results['fba_return_df'], "fba_return_raw_data.xlsx")
+
             col1, col2 = st.columns(2)
             with col1:
                 st.subheader("FBA Return - Brand Pivot")
