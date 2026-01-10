@@ -167,8 +167,8 @@ def create_asin_pivot(df):
         aggfunc="sum"
     ).reset_index().sort_values("Quantity", ascending=False)
 
-def create_asin_final_summary(asin_qty_pivot, fba_return_asin, seller_flex_asin):
-    """Create final ASIN summary with returns"""
+def create_asin_final_summary(asin_qty_pivot, fba_return_asin, seller_flex_asin, pm_df=None, fba_disposition_pivot=None):
+    """Create final ASIN summary with returns and product details from PM file"""
     # Rename columns for FBA and Seller Flex
     if fba_return_asin is not None:
         fba_return_asin = fba_return_asin.rename(columns={"quantity": "FBA Return", "asin": "Asin"})
@@ -178,6 +178,22 @@ def create_asin_final_summary(asin_qty_pivot, fba_return_asin, seller_flex_asin)
     
     # Start with quantity pivot
     result = asin_qty_pivot.copy()
+    
+    # Merge Brand, Product Name, and Vendor SKU Codes from PM file
+    if pm_df is not None:
+        pm_cols = ["ASIN", "Brand", "Product Name", "Vendor SKU Codes"]
+        available_cols = [col for col in pm_cols if col in pm_df.columns]
+        if available_cols:
+            pm_clean = pm_df[available_cols].drop_duplicates(subset=["ASIN"]).copy()
+            result = result.merge(
+                pm_clean,
+                left_on="Asin",
+                right_on="ASIN",
+                how="left"
+            )
+            # Drop duplicate ASIN column from PM
+            if "ASIN" in result.columns:
+                result = result.drop(columns=["ASIN"])
     
     # Merge FBA returns
     if fba_return_asin is not None:
@@ -209,6 +225,44 @@ def create_asin_final_summary(asin_qty_pivot, fba_return_asin, seller_flex_asin)
     result["Return In %"] = (
         (result["Total Return"] / result["Quantity"]) * 100
     ).round(2)
+    
+    # Merge FBA Disposition columns
+    disposition_cols = []
+    if fba_disposition_pivot is not None:
+        # Rename asin column to match
+        disp_df = fba_disposition_pivot.copy()
+        if "asin" in disp_df.columns:
+            disp_df = disp_df.rename(columns={"asin": "Asin"})
+        
+        # Get disposition columns (all columns except Asin and Total)
+        disposition_cols = [col for col in disp_df.columns if col not in ["Asin", "Total"]]
+        
+        # Merge disposition data
+        result = result.merge(
+            disp_df,
+            on="Asin",
+            how="left"
+        )
+        
+        # Fill NaN values with 0 for disposition columns
+        for col in disposition_cols:
+            if col in result.columns:
+                result[col] = result[col].fillna(0).astype(int)
+        
+        # Rename Total from disposition pivot to Disposition Total
+        if "Total" in result.columns:
+            result = result.rename(columns={"Total": "Disposition Total"})
+            result["Disposition Total"] = result["Disposition Total"].fillna(0).astype(int)
+    
+    # Reorder columns to put product info near the front, disposition cols at the end
+    desired_order = ["Asin", "Brand", "Product Name", "Vendor SKU Codes", "Quantity", 
+                     "FBA Return", "Seller Flex", "Total Return", "Return In %"]
+    existing_cols = [col for col in desired_order if col in result.columns]
+    # Add disposition columns at the end
+    if disposition_cols:
+        existing_cols = existing_cols + disposition_cols + ["Disposition Total"]
+    other_cols = [col for col in result.columns if col not in existing_cols]
+    result = result[existing_cols + other_cols]
     
     # Sort by Quantity descending
     result = result.sort_values("Quantity", ascending=False)
@@ -258,7 +312,7 @@ def process_fba_return(df, pm_df):
     
     return df
 
-def create_final_summary(brand_qty_pivot, brand_fba_pivot, brand_seller_pivot):
+def create_final_summary(brand_qty_pivot, brand_fba_pivot, brand_seller_pivot, fba_disposition_brand_pivot=None):
     """Create final brand summary with returns"""
     # Rename columns
     brand_fba_pivot = brand_fba_pivot.rename(columns={"quantity": "FBA Return"})
@@ -287,7 +341,31 @@ def create_final_summary(brand_qty_pivot, brand_fba_pivot, brand_seller_pivot):
     result["Return In %"] = (
         (result["Total Return"] / result["Quantity"]) * 100
     ).round(2)
-    
+
+    # Merge FBA Disposition columns
+    disposition_cols = []
+    if fba_disposition_brand_pivot is not None:
+        # Get disposition columns (all columns except Brand)
+        disposition_cols = [col for col in fba_disposition_brand_pivot.columns if col != "Brand"]
+        
+        # Merge disposition data
+        result = result.merge(
+            fba_disposition_brand_pivot,
+            on="Brand",
+            how="left"
+        )
+        
+        # Fill NaN values with 0 for disposition columns
+        for col in disposition_cols:
+            if col in result.columns:
+                result[col] = result[col].fillna(0).astype(int)
+        
+        # Calculate/Overwritre Disposition Total for Brand
+        # This sums the disposition columns we just merged
+        valid_disp_cols = [col for col in disposition_cols if col in result.columns]
+        if valid_disp_cols:
+            result["Disposition Total"] = result[valid_disp_cols].sum(axis=1)
+
     return result
 
 @st.cache_data
@@ -418,6 +496,8 @@ if process_button:
                     fba_return_df = None
                     fba_return_brand = None
                     fba_return_asin = None
+                    fba_disposition_pivot = None
+                    fba_disposition_brand_pivot = None
                     
                     if fba_return_file and product_master_file:
                         fba_return_df = pd.read_csv(fba_return_file)
@@ -435,13 +515,39 @@ if process_button:
                             values="quantity",
                             aggfunc="sum"
                         ).reset_index().sort_values("quantity", ascending=False)
+                        
+                        # Create ASIN x Disposition pivot table
+                        if "detailed-disposition" in fba_return_df.columns:
+                            fba_disposition_pivot = fba_return_df.pivot_table(
+                                index="asin",
+                                columns="detailed-disposition",
+                                values="quantity",
+                                aggfunc="sum",
+                                fill_value=0
+                            ).reset_index()
+                            # Add total column
+                            fba_disposition_pivot["Total"] = fba_disposition_pivot.select_dtypes(include='number').sum(axis=1)
+                            fba_disposition_pivot = fba_disposition_pivot.sort_values("Total", ascending=False)
+                            
+                            # Create Brand x Disposition pivot table
+                            fba_disposition_brand_pivot = fba_return_df.pivot_table(
+                                index="Brand",
+                                columns="detailed-disposition",
+                                values="quantity",
+                                aggfunc="sum",
+                                fill_value=0
+                            ).reset_index()
+                            
+                            # We don't need a Total column here immediately as we calculate it in summary, 
+                            # but filtering numeric cols is safer if we did.
                     
                     # Create final summaries
                     if fba_return_brand is not None and seller_flex_brand is not None:
                         brand_final = create_final_summary(
                             brand_qty_pivot,
                             fba_return_brand,
-                            seller_flex_brand
+                            seller_flex_brand,
+                            fba_disposition_brand_pivot
                         )
                     else:
                         brand_final = brand_qty_pivot
@@ -451,7 +557,9 @@ if process_button:
                         asin_final = create_asin_final_summary(
                             asin_qty_pivot,
                             fba_return_asin,
-                            seller_flex_asin
+                            seller_flex_asin,
+                            pm_df if product_master_file else None,
+                            fba_disposition_pivot
                         )
                     else:
                         asin_final = asin_qty_pivot
@@ -482,6 +590,8 @@ if process_button:
                         fba_return_brand = add_grand_total(fba_return_brand)
                     if fba_return_asin is not None:
                         fba_return_asin = add_grand_total(fba_return_asin)
+                    if fba_disposition_pivot is not None:
+                        fba_disposition_pivot = add_grand_total(fba_disposition_pivot)
 
                     # Store results
                     st.session_state.results = {
@@ -495,6 +605,7 @@ if process_button:
                         'fba_return_df': fba_return_df,
                         'fba_return_brand': fba_return_brand,
                         'fba_return_asin': fba_return_asin,
+                        'fba_disposition_pivot': fba_disposition_pivot,
                         'brand_final': brand_final,
                         'metrics': {
                             'total_records': total_records,
@@ -603,6 +714,12 @@ if st.session_state.processed:
                 st.subheader("FBA Return - ASIN Pivot")
                 st.dataframe(results['fba_return_asin'], use_container_width=True)
                 create_download_button(results['fba_return_asin'], "fba_return_asin.xlsx")
+            
+            # FBA Disposition Pivot Table
+            if results.get('fba_disposition_pivot') is not None:
+                st.subheader("FBA Return - ASIN x Disposition Pivot")
+                st.dataframe(results['fba_disposition_pivot'], use_container_width=True)
+                create_download_button(results['fba_disposition_pivot'], "fba_disposition_pivot.xlsx")
         else:
             st.info("No FBA Return data uploaded")
     
