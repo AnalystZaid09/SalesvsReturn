@@ -721,14 +721,24 @@ if st.session_state.processed:
                 # Generate CSV only when button is clicked (lazy)
                 raw_df = results.get('raw_combined_df')
                 if raw_df is not None:
-                    st.download_button(
-                        label="📥 Download Raw Unfiltered CSV",
-                        data=convert_df_to_csv(raw_df),
-                        file_name="raw_combined_unfiltered_report.csv",
-                        mime="text/csv",
-                        use_container_width=True
-                    )
-                st.caption("Note: Raw data is provided as CSV for faster processing and to prevent memory errors.")
+                    col_dl1, col_dl2 = st.columns(2)
+                    with col_dl1:
+                        st.download_button(
+                            label="📥 Download Raw Unfiltered CSV",
+                            data=convert_df_to_csv(raw_df),
+                            file_name="raw_combined_unfiltered_report.csv",
+                            mime="text/csv",
+                            use_container_width=True
+                        )
+                    with col_dl2:
+                        st.download_button(
+                            label="📥 Download Raw Unfiltered Excel",
+                            data=convert_df_to_excel(raw_df),
+                            file_name="raw_combined_unfiltered_report.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True
+                        )
+                st.caption("Note: For very large datasets, CSV download is faster and more stable.")
             else:
                 st.warning("Raw combined data not available.")
         
