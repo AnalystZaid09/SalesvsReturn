@@ -440,6 +440,12 @@ if 'processed' not in st.session_state:
     st.session_state.processed = False
     st.session_state.results = {}
 
+# Initialize session state for lazy download generation
+if 'raw_excel_data' not in st.session_state:
+    st.session_state.raw_excel_data = None
+if 'zip_data' not in st.session_state:
+    st.session_state.zip_data = None
+
 # File Upload Section
 col1, col2 = st.columns(2)
 
@@ -487,6 +493,10 @@ st.markdown("---")
 process_button = st.button("🚀 Process Data", use_container_width=True, type="primary")
 
 if process_button:
+    # Reset lazy download states when reprocessing
+    st.session_state.raw_excel_data = None
+    st.session_state.zip_data = None
+    
     if not (b2b_files or b2c_files):
         st.error("Please upload at least one B2B or B2C report file.")
     else:
@@ -756,18 +766,23 @@ if st.session_state.processed:
                         use_container_width=True
                     )
                 with col_dl2:
-                    # Raw Excel is only generated if clicked to save RAM
-                    if st.button("Generate Raw Excel (Slow)", use_container_width=True):
+                    # Raw Excel is only generated if clicked to save RAM - use session state to persist
+                    if st.button("🛠️ Generate Raw Excel (Slow)", use_container_width=True, key="gen_raw_excel"):
                         raw_df = results.get('raw_combined_df')
                         if raw_df is not None:
-                            excel_data = convert_df_to_excel(raw_df)
-                            st.download_button(
-                                label="📥 Click to Download Raw Excel",
-                                data=excel_data,
-                                file_name="raw_combined_unfiltered_report.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                use_container_width=True
-                            )
+                            with st.spinner("Generating Excel file..."):
+                                st.session_state.raw_excel_data = convert_df_to_excel(raw_df)
+                    
+                    # Show download button if data is ready (persists across reruns)
+                    if st.session_state.raw_excel_data is not None:
+                        st.download_button(
+                            label="📥 Download Raw Excel",
+                            data=st.session_state.raw_excel_data,
+                            file_name="raw_combined_unfiltered_report.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True,
+                            key="dl_raw_excel"
+                        )
                 st.caption("Note: CSV is instantaneous. Excel may take a minute for 97k rows.")
             else:
                 st.warning("Raw combined data not available.")
@@ -850,37 +865,41 @@ if st.session_state.processed:
         st.markdown("---")
         st.subheader("📥 Download All Reports")
         
-        if st.button("Generate Reports ZIP (Analysis Only)", use_container_width=True):
-            # Create ZIP file with main reports only (avoiding the huge raw/shipment ones if they cause issues)
-            # Actually, let's include everything that has a pre-calculated excel
-            progress_bar = st.progress(0)
-            zip_buffer = io.BytesIO()
-            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-                downloads = results.get('downloads', {})
-                for file_key, data in downloads.items():
-                    if data and file_key != 'raw_csv': # Skip raw csv for the excel zip
-                        zip_file.writestr(f"{file_key}.xlsx", data)
+        # Use session state to persist ZIP data across reruns
+        if st.button("🛠️ Generate Reports ZIP (Analysis Only)", use_container_width=True, key="gen_zip"):
+            with st.spinner("Creating ZIP file..."):
+                zip_buffer = io.BytesIO()
+                with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                    downloads = results.get('downloads', {})
+                    for file_key, data in downloads.items():
+                        if data and file_key != 'raw_csv': # Skip raw csv for the excel zip
+                            zip_file.writestr(f"{file_key}.xlsx", data)
+                    
+                    # Add small pivots if not in downloads
+                    small_reports = {
+                        'seller_flex_brand': results.get('seller_flex_brand'),
+                        'seller_flex_asin': results.get('seller_flex_asin'),
+                        'fba_return_brand': results.get('fba_return_brand'),
+                        'fba_return_asin': results.get('fba_return_asin'),
+                        'fba_disposition': results.get('fba_disposition_pivot')
+                    }
+                    for name, df in small_reports.items():
+                        if df is not None:
+                            zip_file.writestr(f"{name}.xlsx", convert_df_to_excel(df))
                 
-                # Add small pivots if not in downloads
-                small_reports = {
-                    'seller_flex_brand': results.get('seller_flex_brand'),
-                    'seller_flex_asin': results.get('seller_flex_asin'),
-                    'fba_return_brand': results.get('fba_return_brand'),
-                    'fba_return_asin': results.get('fba_return_asin'),
-                    'fba_disposition': results.get('fba_disposition_pivot')
-                }
-                for name, df in small_reports.items():
-                    if df is not None:
-                        zip_file.writestr(f"{name}.xlsx", convert_df_to_excel(df))
-            
+                st.session_state.zip_data = zip_buffer.getvalue()
+                gc.collect()
+        
+        # Show download button if ZIP is ready (persists across reruns)
+        if st.session_state.zip_data is not None:
             st.download_button(
-                label="📦 Click to Download Analysis ZIP",
-                data=zip_buffer.getvalue(),
+                label="📦 Download Analysis ZIP",
+                data=st.session_state.zip_data,
                 file_name="amazon_analysis_reports.zip",
                 mime="application/zip",
-                use_container_width=True
+                use_container_width=True,
+                key="dl_zip"
             )
-            gc.collect()
 
     except Exception as e:
         st.error(f"An error occurred during display: {str(e)}")
