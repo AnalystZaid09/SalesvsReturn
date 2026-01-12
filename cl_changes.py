@@ -120,27 +120,22 @@ def add_grand_total(df):
 
 def ensure_arrow_compatibility(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Ensure the dataframe is compatible with Apache Arrow (Streamlit's internal format).
-    This handles raw bytes and mixed types in object columns.
+    Ensure the dataframe is compatible with Apache Arrow.
+    Only processes necessary columns to save time.
     """
     if df is None or df.empty:
         return df
         
-    for col in df.columns:
-        # 1. Handle raw bytes/bytearrays
-        if df[col].dtype == object:
-            sample = df[col].dropna().head(1)
-            if not sample.empty and isinstance(sample.iloc[0], (bytes, bytearray)):
-                df = df.drop(columns=[col])
-                continue
-            
-            # 2. Handle mixed types in object columns by casting to string
-            # This is a common cause of Arrow serialization errors
-            try:
-                # If it's mostly strings/mixed, cast to string
-                df[col] = df[col].astype(str).replace('nan', '')
-            except:
-                pass
+    # Identification of object columns that need cleaning
+    object_cols = df.select_dtypes(include=['object']).columns
+    for col in object_cols:
+        # Handle raw bytes
+        if df[col].apply(lambda x: isinstance(x, (bytes, bytearray))).any():
+            df = df.drop(columns=[col])
+            continue
+        
+        # Cast to string - use a faster method for large DFs
+        df[col] = df[col].astype(str).replace(['nan', 'None', 'NaN'], '')
                 
     return df
 
@@ -399,13 +394,21 @@ def create_final_summary(brand_qty_pivot, brand_fba_pivot, brand_seller_pivot, f
 
     return result
 
-@st.cache_data
 def convert_df_to_excel(df):
-    """Convert dataframe to excel bytes with caching"""
+    """Convert dataframe to excel bytes. Caching removed to save memory on large datasets."""
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Sheet1')
+    # Try xlsxwriter for better performance, fallback to openpyxl
+    try:
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            df.to_excel(writer, index=False, sheet_name='Sheet1')
+    except:
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='Sheet1')
     return output.getvalue()
+
+def convert_df_to_csv(df):
+    """Convert dataframe to CSV - much faster and lighter for raw data"""
+    return df.to_csv(index=False).encode('utf-8')
 
 def create_download_button(df, filename, button_text="📥 Download Excel"):
     """Create a download button for dataframe"""
@@ -495,7 +498,7 @@ if process_button:
                     # Process combined data
                     combined_df = process_combined_data(combined_df)
                     combined_df = ensure_arrow_compatibility(combined_df)
-                    raw_combined_df = ensure_arrow_compatibility(raw_combined_df)
+                    # Skip compatibility check for raw_combined_df to save time (we only need it for CSV download)
 
                     # Load product master
                     if product_master_file:
@@ -698,9 +701,18 @@ if st.session_state.processed:
             raw_count = results.get('metrics', {}).get('raw_total_records', 0)
             st.info(f"This report contains all {raw_count:,} records without any filtering.")
             if 'raw_combined_df' in results and results['raw_combined_df'] is not None:
-                st.write(f"Preview (First 5 rows):")
-                st.write(results['raw_combined_df'].head(5))
-                create_download_button(results['raw_combined_df'], "raw_combined_unfiltered_report.xlsx", "📥 Download Raw Unfiltered Excel")
+                # Use CSV for the raw data to prevent timeouts - No preview for huge datasets
+                
+                # Use CSV for the raw data to prevent timeouts
+                csv_data = convert_df_to_csv(results['raw_combined_df'])
+                st.download_button(
+                    label="📥 Download Raw Unfiltered CSV",
+                    data=csv_data,
+                    file_name="raw_combined_unfiltered_report.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+                st.caption("Note: Raw data is provided as CSV for faster processing and to prevent memory errors.")
             else:
                 st.warning("Raw combined data not available.")
         
