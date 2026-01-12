@@ -53,6 +53,10 @@ def read_zip_files(zip_files):
                         
                         df["Source_Zip"] = zip_file.name
                         df["Source_File"] = file_name
+                        
+                        # Normalize column names to Title Case to handle inconsistent casing across files
+                        df.columns = [str(c).strip().title() for c in df.columns]
+                        
                         all_data.append(df)
     
     if all_data:
@@ -104,13 +108,30 @@ def add_grand_total(df):
 
     return pd.concat([df, pd.DataFrame([total_row])], ignore_index=True)
 
-def remove_byte_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Drop columns that contain raw bytes (Arrow cannot serialize them)"""
+def ensure_arrow_compatibility(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Ensure the dataframe is compatible with Apache Arrow (Streamlit's internal format).
+    This handles raw bytes and mixed types in object columns.
+    """
+    if df is None or df.empty:
+        return df
+        
     for col in df.columns:
+        # 1. Handle raw bytes/bytearrays
         if df[col].dtype == object:
             sample = df[col].dropna().head(1)
             if not sample.empty and isinstance(sample.iloc[0], (bytes, bytearray)):
                 df = df.drop(columns=[col])
+                continue
+            
+            # 2. Handle mixed types in object columns by casting to string
+            # This is a common cause of Arrow serialization errors
+            try:
+                # If it's mostly strings/mixed, cast to string
+                df[col] = df[col].astype(str).replace('nan', '')
+            except:
+                pass
+                
     return df
 
 
@@ -454,12 +475,17 @@ if process_button:
                 all_zip_files = (b2b_files or []) + (b2c_files or [])
                 combined_df = read_zip_files(all_zip_files)
                 
+                # Store raw count and raw unfiltered df before any processing
+                raw_total_records = len(combined_df)
+                raw_combined_df = combined_df.copy()
+
                 if combined_df.empty:
                     st.error("No data found in the uploaded files.")
                 else:
                     # Process combined data
                     combined_df = process_combined_data(combined_df)
-                    combined_df = remove_byte_columns(combined_df)
+                    combined_df = ensure_arrow_compatibility(combined_df)
+                    raw_combined_df = ensure_arrow_compatibility(raw_combined_df)
 
                     # Load product master
                     if product_master_file:
@@ -478,7 +504,7 @@ if process_button:
                     if seller_flex_file and product_master_file:
                         seller_flex_df = pd.read_csv(seller_flex_file)
                         seller_flex_df = process_seller_flex(seller_flex_df, pm_df)
-                        seller_flex_df = remove_byte_columns(seller_flex_df)
+                        seller_flex_df = ensure_arrow_compatibility(seller_flex_df)
                         
                         seller_flex_brand = seller_flex_df.pivot_table(
                             index="Brand",
@@ -502,7 +528,7 @@ if process_button:
                     if fba_return_file and product_master_file:
                         fba_return_df = pd.read_csv(fba_return_file)
                         fba_return_df = process_fba_return(fba_return_df, pm_df)
-                        fba_return_df = remove_byte_columns(fba_return_df)
+                        fba_return_df = ensure_arrow_compatibility(fba_return_df)
 
                         fba_return_brand = fba_return_df.pivot_table(
                             index="Brand",
@@ -596,6 +622,7 @@ if process_button:
                     # Store results
                     st.session_state.results = {
                         'combined_df': combined_df,
+                        'raw_combined_df': raw_combined_df,
                         'brand_qty_pivot': brand_qty_pivot,
                         'asin_qty_pivot': asin_qty_pivot,
                         'asin_final': asin_final,
@@ -609,6 +636,7 @@ if process_button:
                         'brand_final': brand_final,
                         'metrics': {
                             'total_records': total_records,
+                            'raw_total_records': int(raw_total_records),
                             'total_brands': total_brands,
                             'total_asins': total_asins,
                             'total_sf_returns': total_sf_returns
@@ -632,27 +660,39 @@ if st.session_state.processed:
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        st.metric("Total Records", f"{results['metrics']['total_records']:,}")
+        metrics = results.get('metrics', {})
+        st.metric("Total Records (Raw)", f"{metrics.get('raw_total_records', 0):,}")
+        st.metric("Filtered Records", f"{metrics.get('total_records', 0):,}")
     with col2:
-        st.metric("Total Brands", f"{results['metrics']['total_brands']:,}")
+        st.metric("Total Brands", f"{metrics.get('total_brands', 0):,}")
     with col3:
-        st.metric("Total ASINs", f"{results['metrics']['total_asins']:,}")
+        st.metric("Total ASINs", f"{metrics.get('total_asins', 0):,}")
     with col4:
-        st.metric("Seller Flex Returns", f"{results['metrics']['total_sf_returns']:,}")
+        st.metric("Seller Flex Returns", f"{metrics.get('total_sf_returns', 0):,}")
     
     # Tabs for different reports
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "📋 Combined Data",
+    tab_raw, tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "� Raw Combined Data",
+        "📋 Filtered Data",
         "🏷️ Brand Analysis",
         "🔖 ASIN Analysis",
         "📦 Seller Flex",
         "↩️ FBA Returns"
     ])
+
+    with tab_raw:
+        st.subheader("Raw Unfiltered Combined Data")
+        st.info(f"This report contains all {results.get('metrics', {}).get('raw_total_records', 0):,} records without any filtering.")
+        if 'raw_combined_df' in results:
+            st.dataframe(results['raw_combined_df'].head(100), use_container_width=True)
+            create_download_button(results['raw_combined_df'], "raw_combined_unfiltered_report.xlsx", "📥 Download Raw Unfiltered Excel")
+        else:
+            st.warning("Raw combined data not available in current session.")
     
     with tab1:
-        st.subheader("Combined Transaction Data")
+        st.subheader("Filtered Transaction Data (Shipments Only)")
         st.dataframe(results['combined_df'].head(100), use_container_width=True)
-        create_download_button(results['combined_df'], "combined_data_report.xlsx")
+        create_download_button(results['combined_df'], "filtered_shipment_report.xlsx", "📥 Download Filtered Excel")
     
     with tab2:
         col1, col2 = st.columns(2)
