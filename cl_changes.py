@@ -4,6 +4,7 @@ import zipfile
 import io
 from pathlib import Path
 import base64
+import traceback
 
 # Page configuration
 st.set_page_config(
@@ -647,144 +648,151 @@ if process_button:
                     # st.rerun()
                     
             except Exception as e:
-                st.error(f"An error occurred: {str(e)}")
+                st.error(f"An error occurred during processing: {str(e)}")
+                st.code(traceback.format_exc())
 
 # Display Results
 if st.session_state.processed:
-    st.markdown("---")
-    st.markdown("## 📊 Analysis Results")
+    try:
+        st.markdown("---")
+        st.markdown("## 📊 Analysis Results")
+        
+        results = st.session_state.results
     
-    results = st.session_state.results
-    
-    # Metrics
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        metrics = results.get('metrics', {})
-        st.metric("Total Records (Raw)", f"{metrics.get('raw_total_records', 0):,}")
-        st.metric("Filtered Records", f"{metrics.get('total_records', 0):,}")
-    with col2:
-        st.metric("Total Brands", f"{metrics.get('total_brands', 0):,}")
-    with col3:
-        st.metric("Total ASINs", f"{metrics.get('total_asins', 0):,}")
-    with col4:
-        st.metric("Seller Flex Returns", f"{metrics.get('total_sf_returns', 0):,}")
-    
-    # Tabs for different reports
-    tab_raw, tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "📊 Raw Combined Data",
-        "📋 Filtered Data",
-        "🏷️ Brand Analysis",
-        "🔖 ASIN Analysis",
-        "📦 Seller Flex",
-        "↩️ FBA Returns"
-    ])
+        
+        # Metrics
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            metrics = results.get('metrics', {})
+            st.metric("Total Records (Raw)", f"{metrics.get('raw_total_records', 0):,}")
+            st.metric("Filtered Records", f"{metrics.get('total_records', 0):,}")
+        with col2:
+            st.metric("Total Brands", f"{metrics.get('total_brands', 0):,}")
+        with col3:
+            st.metric("Total ASINs", f"{metrics.get('total_asins', 0):,}")
+        with col4:
+            st.metric("Seller Flex Returns", f"{metrics.get('total_sf_returns', 0):,}")
+        
+        # Tabs for different reports
+        tab_raw, tab1, tab2, tab3, tab4, tab5 = st.tabs([
+            "Raw Combined Data",
+            "Filtered Data",
+            "Brand Analysis",
+            "ASIN Analysis",
+            "Seller Flex",
+            "FBA Returns"
+        ])
 
-    with tab_raw:
-        st.subheader("Raw Unfiltered Combined Data")
-        raw_count = results.get('metrics', {}).get('raw_total_records', 0)
-        st.info(f"This report contains all {raw_count:,} records without any filtering.")
-        if 'raw_combined_df' in results and results['raw_combined_df'] is not None:
-            st.dataframe(results['raw_combined_df'].head(100), use_container_width=True)
-            create_download_button(results['raw_combined_df'], "raw_combined_unfiltered_report.xlsx", "📥 Download Raw Unfiltered Excel")
-        else:
-            st.warning("Raw combined data not available.")
-    
-    with tab1:
-        st.subheader("Filtered Transaction Data (Shipments Only)")
-        st.dataframe(results['combined_df'].head(100), use_container_width=True)
-        create_download_button(results['combined_df'], "filtered_shipment_report.xlsx", "📥 Download Filtered Excel")
-    
-    with tab2:
-        col1, col2 = st.columns(2)
-        with col1:
-            st.subheader("Brand Quantity Pivot")
-            st.dataframe(results['brand_qty_pivot'], use_container_width=True)
-            create_download_button(results['brand_qty_pivot'], "brand_quantity_pivot.xlsx")
+        with tab_raw:
+            st.subheader("Raw Unfiltered Combined Data")
+            raw_count = results.get('metrics', {}).get('raw_total_records', 0)
+            st.info(f"This report contains all {raw_count:,} records without any filtering.")
+            if 'raw_combined_df' in results and results['raw_combined_df'] is not None:
+                st.dataframe(results['raw_combined_df'].head(100), use_container_width=True)
+                create_download_button(results['raw_combined_df'], "raw_combined_unfiltered_report.xlsx", "📥 Download Raw Unfiltered Excel")
+            else:
+                st.warning("Raw combined data not available.")
         
-        with col2:
-            st.subheader("Brand Final Summary (with Returns)")
-            st.dataframe(results['brand_final'], use_container_width=True)
-            create_download_button(results['brand_final'], "brand_final_summary.xlsx")
-    
-    with tab3:
-        col1, col2 = st.columns(2)
-        with col1:
-            st.subheader("ASIN Quantity Pivot")
-            st.dataframe(results['asin_qty_pivot'], use_container_width=True)
-            create_download_button(results['asin_qty_pivot'], "asin_quantity_pivot.xlsx")
+        with tab1:
+            st.subheader("Filtered Transaction Data (Shipments Only)")
+            st.dataframe(results['combined_df'].head(100), use_container_width=True)
+            create_download_button(results['combined_df'], "filtered_shipment_report.xlsx", "📥 Download Filtered Excel")
         
-        with col2:
-            if 'asin_final' in results and results['asin_final'] is not None:
-                st.subheader("ASIN Final Summary (with Returns)")
-                st.dataframe(results['asin_final'], use_container_width=True)
-                create_download_button(results['asin_final'], "asin_final_summary.xlsx")
-    
-    with tab4:
-        if results['seller_flex_df'] is not None:
-            st.subheader("Raw Seller Flex Data")
-            st.dataframe(results['seller_flex_df'].head(100), use_container_width=True)
-            create_download_button(results['seller_flex_df'], "seller_flex_raw_data.xlsx")
-            
+        with tab2:
             col1, col2 = st.columns(2)
             with col1:
-                st.subheader("Seller Flex - Brand Pivot")
-                st.dataframe(results['seller_flex_brand'],use_container_width=True)
-                create_download_button(results['seller_flex_brand'], "seller_flex_brand.xlsx")
+                st.subheader("Brand Quantity Pivot")
+                st.dataframe(results['brand_qty_pivot'], use_container_width=True)
+                create_download_button(results['brand_qty_pivot'], "brand_quantity_pivot.xlsx")
             
             with col2:
-                st.subheader("Seller Flex - ASIN Pivot")
-                st.dataframe(results['seller_flex_asin'], use_container_width=True)
-                create_download_button(results['seller_flex_asin'], "seller_flex_asin.xlsx")
-        else:
-            st.info("No Seller Flex data uploaded")
-    
-    with tab5:
-        if results['fba_return_df'] is not None:
-            st.subheader("Raw FBA Return Data")
-            st.dataframe(results['fba_return_df'].head(100), use_container_width=True)
-            create_download_button(results['fba_return_df'], "fba_return_raw_data.xlsx")
-
+                st.subheader("Brand Final Summary (with Returns)")
+                st.dataframe(results['brand_final'], use_container_width=True)
+                create_download_button(results['brand_final'], "brand_final_summary.xlsx")
+        
+        with tab3:
             col1, col2 = st.columns(2)
             with col1:
-                st.subheader("FBA Return - Brand Pivot")
-                st.dataframe(results['fba_return_brand'], use_container_width=True)
-                create_download_button(results['fba_return_brand'], "fba_return_brand.xlsx")
+                st.subheader("ASIN Quantity Pivot")
+                st.dataframe(results['asin_qty_pivot'], use_container_width=True)
+                create_download_button(results['asin_qty_pivot'], "asin_quantity_pivot.xlsx")
             
             with col2:
-                st.subheader("FBA Return - ASIN Pivot")
-                st.dataframe(results['fba_return_asin'], use_container_width=True)
-                create_download_button(results['fba_return_asin'], "fba_return_asin.xlsx")
-            
-            # FBA Disposition Pivot Table
-            if results.get('fba_disposition_pivot') is not None:
-                st.subheader("FBA Return - ASIN x Disposition Pivot")
-                st.dataframe(results['fba_disposition_pivot'], use_container_width=True)
-                create_download_button(results['fba_disposition_pivot'], "fba_disposition_pivot.xlsx")
-        else:
-            st.info("No FBA Return data uploaded")
-    
-    # Download All Button
-    st.markdown("---")
-    st.subheader("📥 Download All Reports")
-    
-    if st.button("Download All Reports as ZIP", use_container_width=True):
-        # Create ZIP file with all reports
-        zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-            for name, df in results.items():
-                if df is not None and isinstance(df, pd.DataFrame):
-                    # Use the cached converter for each file in the ZIP too
-                    excel_bytes = convert_df_to_excel(df)
-                    zip_file.writestr(f"{name}.xlsx", excel_bytes)
+                if 'asin_final' in results and results['asin_final'] is not None:
+                    st.subheader("ASIN Final Summary (with Returns)")
+                    st.dataframe(results['asin_final'], use_container_width=True)
+                    create_download_button(results['asin_final'], "asin_final_summary.xlsx")
         
-        st.download_button(
-            label="📦 Download ZIP",
-            data=zip_buffer.getvalue(),
-            file_name="all_reports.zip",
-            mime="application/zip",
-            use_container_width=True
-        )
+        with tab4:
+            if results['seller_flex_df'] is not None:
+                st.subheader("Raw Seller Flex Data")
+                st.dataframe(results['seller_flex_df'].head(100), use_container_width=True)
+                create_download_button(results['seller_flex_df'], "seller_flex_raw_data.xlsx")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.subheader("Seller Flex - Brand Pivot")
+                    st.dataframe(results['seller_flex_brand'],use_container_width=True)
+                    create_download_button(results['seller_flex_brand'], "seller_flex_brand.xlsx")
+                
+                with col2:
+                    st.subheader("Seller Flex - ASIN Pivot")
+                    st.dataframe(results['seller_flex_asin'], use_container_width=True)
+                    create_download_button(results['seller_flex_asin'], "seller_flex_asin.xlsx")
+            else:
+                st.info("No Seller Flex data uploaded")
+        
+        with tab5:
+            if results['fba_return_df'] is not None:
+                st.subheader("Raw FBA Return Data")
+                st.dataframe(results['fba_return_df'].head(100), use_container_width=True)
+                create_download_button(results['fba_return_df'], "fba_return_raw_data.xlsx")
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.subheader("FBA Return - Brand Pivot")
+                    st.dataframe(results['fba_return_brand'], use_container_width=True)
+                    create_download_button(results['fba_return_brand'], "fba_return_brand.xlsx")
+                
+                with col2:
+                    st.subheader("FBA Return - ASIN Pivot")
+                    st.dataframe(results['fba_return_asin'], use_container_width=True)
+                    create_download_button(results['fba_return_asin'], "fba_return_asin.xlsx")
+                
+                # FBA Disposition Pivot Table
+                if results.get('fba_disposition_pivot') is not None:
+                    st.subheader("FBA Return - ASIN x Disposition Pivot")
+                    st.dataframe(results['fba_disposition_pivot'], use_container_width=True)
+                    create_download_button(results['fba_disposition_pivot'], "fba_disposition_pivot.xlsx")
+            else:
+                st.info("No FBA Return data uploaded")
+        
+        # Download All Button
+        st.markdown("---")
+        st.subheader("📥 Download All Reports")
+        
+        if st.button("Download All Reports as ZIP", use_container_width=True):
+            # Create ZIP file with all reports
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                for name, df in results.items():
+                    if df is not None and isinstance(df, pd.DataFrame):
+                        # Use the cached converter for each file in the ZIP too
+                        excel_bytes = convert_df_to_excel(df)
+                        zip_file.writestr(f"{name}.xlsx", excel_bytes)
+            
+            st.download_button(
+                label="📦 Download ZIP",
+                data=zip_buffer.getvalue(),
+                file_name="all_reports.zip",
+                mime="application/zip",
+                use_container_width=True
+            )
+
+    except Exception as e:
+        st.error(f"An error occurred during display: {str(e)}")
+        st.code(traceback.format_exc())
 
 # Footer
 st.markdown("---")
