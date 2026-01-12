@@ -12,7 +12,6 @@ st.set_page_config(
     page_icon="📊",
     layout="wide"
 )
-
 # Custom CSS
 st.markdown("""
     <style>
@@ -55,8 +54,18 @@ def read_zip_files(zip_files):
                         df["Source_Zip"] = zip_file.name
                         df["Source_File"] = file_name
                         
-                        # Normalize column names to Title Case to handle inconsistent casing across files
-                        df.columns = [str(c).strip().title() for c in df.columns]
+                        # Normalize column names to Title Case and deduplicate
+                        new_cols = []
+                        seen = {}
+                        for c in df.columns:
+                            base = str(c).strip().title()
+                            if base in seen:
+                                seen[base] += 1
+                                new_cols.append(f"{base}_{seen[base]}")
+                            else:
+                                seen[base] = 0
+                                new_cols.append(base)
+                        df.columns = new_cols
                         
                         all_data.append(df)
     
@@ -689,7 +698,8 @@ if st.session_state.processed:
             raw_count = results.get('metrics', {}).get('raw_total_records', 0)
             st.info(f"This report contains all {raw_count:,} records without any filtering.")
             if 'raw_combined_df' in results and results['raw_combined_df'] is not None:
-                st.dataframe(results['raw_combined_df'].head(100), use_container_width=True)
+                st.write(f"Preview (First 5 rows):")
+                st.write(results['raw_combined_df'].head(5))
                 create_download_button(results['raw_combined_df'], "raw_combined_unfiltered_report.xlsx", "📥 Download Raw Unfiltered Excel")
             else:
                 st.warning("Raw combined data not available.")
