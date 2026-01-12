@@ -441,8 +441,6 @@ if 'processed' not in st.session_state:
     st.session_state.results = {}
 
 # Initialize session state for lazy download generation
-if 'raw_excel_data' not in st.session_state:
-    st.session_state.raw_excel_data = None
 if 'zip_data' not in st.session_state:
     st.session_state.zip_data = None
 
@@ -673,10 +671,11 @@ if process_button:
                     progress_text.text("💾 Preparing raw data download (CSV)...")
                     raw_csv = convert_df_to_csv(raw_combined_df)
 
-                    # Store results - NO raw_combined_df if possible but we need it for Excel
+                    # Store results - AVOID storing large raw dataframes to prevent memory crash
+                    # Only store pivots and pre-computed downloads
                     st.session_state.results = {
                         'combined_df': combined_df,
-                        'raw_combined_df': raw_combined_df,
+                        # 'raw_combined_df': raw_combined_df,  # REMOVED - causes memory overflow
                         'brand_qty_pivot': brand_qty_pivot,
                         'asin_qty_pivot': asin_qty_pivot,
                         'asin_final': asin_final,
@@ -704,10 +703,9 @@ if process_button:
                             'total_sf_returns': int(total_sf_returns)
                         }
                     }
+                    # Aggressive cleanup to prevent memory overflow on Streamlit Cloud
                     del combined_df
-                    # We might need raw_combined_df one last time if they ask for its excel
-                    # But if we precompute its excel here, it might blow RAM. 
-                    # Let's skip raw excel for now or do it selectively.
+                    del raw_combined_df
                     gc.collect()
                     progress_text.text("✨ Almost done...")
                     st.session_state.processed = True
@@ -756,34 +754,14 @@ if st.session_state.processed:
             raw_count = results.get('metrics', {}).get('raw_total_records', 0)
             st.info(f"This report contains all {raw_count:,} records without any filtering.")
             if 'downloads' in results and 'raw_csv' in results['downloads']:
-                col_dl1, col_dl2 = st.columns(2)
-                with col_dl1:
-                    st.download_button(
-                        label="📥 Download Raw Unfiltered CSV",
-                        data=results['downloads']['raw_csv'],
-                        file_name="raw_combined_unfiltered_report.csv",
-                        mime="text/csv",
-                        use_container_width=True
-                    )
-                with col_dl2:
-                    # Raw Excel is only generated if clicked to save RAM - use session state to persist
-                    if st.button("🛠️ Generate Raw Excel (Slow)", use_container_width=True, key="gen_raw_excel"):
-                        raw_df = results.get('raw_combined_df')
-                        if raw_df is not None:
-                            with st.spinner("Generating Excel file..."):
-                                st.session_state.raw_excel_data = convert_df_to_excel(raw_df)
-                    
-                    # Show download button if data is ready (persists across reruns)
-                    if st.session_state.raw_excel_data is not None:
-                        st.download_button(
-                            label="📥 Download Raw Excel",
-                            data=st.session_state.raw_excel_data,
-                            file_name="raw_combined_unfiltered_report.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            use_container_width=True,
-                            key="dl_raw_excel"
-                        )
-                st.caption("Note: CSV is instantaneous. Excel may take a minute for 97k rows.")
+                st.download_button(
+                    label="📥 Download Raw Unfiltered CSV",
+                    data=results['downloads']['raw_csv'],
+                    file_name="raw_combined_unfiltered_report.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+                st.caption("� CSV format is recommended for large datasets. It's faster and more reliable on Streamlit Cloud.")
             else:
                 st.warning("Raw combined data not available.")
         
