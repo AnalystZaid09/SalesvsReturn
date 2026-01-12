@@ -635,11 +635,11 @@ if process_button:
                         'fba_disposition_pivot': fba_disposition_pivot,
                         'brand_final': brand_final,
                         'metrics': {
-                            'total_records': total_records,
+                            'total_records': int(total_records),
                             'raw_total_records': int(raw_total_records),
-                            'total_brands': total_brands,
-                            'total_asins': total_asins,
-                            'total_sf_returns': total_sf_returns
+                            'total_brands': int(total_brands),
+                            'total_asins': int(total_asins),
+                            'total_sf_returns': int(total_sf_returns)
                         }
                     }
                     st.session_state.processed = True
@@ -672,7 +672,7 @@ if st.session_state.processed:
     
     # Tabs for different reports
     tab_raw, tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "� Raw Combined Data",
+        "📊 Raw Combined Data",
         "📋 Filtered Data",
         "🏷️ Brand Analysis",
         "🔖 ASIN Analysis",
@@ -682,12 +682,13 @@ if st.session_state.processed:
 
     with tab_raw:
         st.subheader("Raw Unfiltered Combined Data")
-        st.info(f"This report contains all {results.get('metrics', {}).get('raw_total_records', 0):,} records without any filtering.")
-        if 'raw_combined_df' in results:
+        raw_count = results.get('metrics', {}).get('raw_total_records', 0)
+        st.info(f"This report contains all {raw_count:,} records without any filtering.")
+        if 'raw_combined_df' in results and results['raw_combined_df'] is not None:
             st.dataframe(results['raw_combined_df'].head(100), use_container_width=True)
             create_download_button(results['raw_combined_df'], "raw_combined_unfiltered_report.xlsx", "📥 Download Raw Unfiltered Excel")
         else:
-            st.warning("Raw combined data not available in current session.")
+            st.warning("Raw combined data not available.")
     
     with tab1:
         st.subheader("Filtered Transaction Data (Shipments Only)")
