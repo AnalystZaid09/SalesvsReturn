@@ -5,6 +5,7 @@ import io
 from pathlib import Path
 import base64
 import traceback
+import gc
 
 # Page configuration
 st.set_page_config(
@@ -68,6 +69,8 @@ def read_zip_files(zip_files):
                         df.columns = new_cols
                         
                         all_data.append(df)
+                        # Explicitly clear smaller objects
+                        gc.collect()
     
     if all_data:
         return pd.concat(all_data, ignore_index=True, copy=False)
@@ -120,23 +123,18 @@ def add_grand_total(df):
 
 def ensure_arrow_compatibility(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Ensure the dataframe is compatible with Apache Arrow.
-    Only processes necessary columns to save time.
+    Faster version of Arrow compatibility check.
+    Only touches object columns and handles NaNs.
     """
     if df is None or df.empty:
         return df
-        
-    # Identification of object columns that need cleaning
-    object_cols = df.select_dtypes(include=['object']).columns
-    for col in object_cols:
-        # Handle raw bytes
-        if df[col].apply(lambda x: isinstance(x, (bytes, bytearray))).any():
-            df = df.drop(columns=[col])
-            continue
-        
-        # Cast to string - use a faster method for large DFs
-        df[col] = df[col].astype(str).replace(['nan', 'None', 'NaN'], '')
-                
+    
+    # Process only object columns. Numeric are already Arrow-safe.
+    obj_cols = df.select_dtypes(include=['object']).columns
+    for col in obj_cols:
+        # Cast to string - this solves mixed type issues and Arrow serialization
+        df[col] = df[col].astype(str).replace(['nan', 'None', 'NaN', 'NAT', 'nat'], '')
+    
     return df
 
 
@@ -485,6 +483,8 @@ if process_button:
         with st.spinner("Processing your data..."):
             try:
                 # Combine zip files
+                progress_text = st.empty()
+                progress_text.text("📚 Combining zip files...")
                 all_zip_files = (b2b_files or []) + (b2c_files or [])
                 combined_df = read_zip_files(all_zip_files)
                 
@@ -496,16 +496,22 @@ if process_button:
                     st.error("No data found in the uploaded files.")
                 else:
                     # Process combined data
+                    progress_text.text("🔍 Filtering shipment transactions...")
                     combined_df = process_combined_data(combined_df)
+                    
+                    progress_text.text("🛡️ Cleaning data for display...")
                     combined_df = ensure_arrow_compatibility(combined_df)
                     # Skip compatibility check for raw_combined_df to save time (we only need it for CSV download)
 
                     # Load product master
                     if product_master_file:
+                        progress_text.text("📂 Loading Product Master...")
                         pm_df = pd.read_excel(product_master_file)
+                        progress_text.text("🔗 Merging Product details...")
                         combined_df = merge_product_master(combined_df, pm_df)
                         
                     # Create pivots
+                    progress_text.text("📊 Creating analysis pivots...")
                     brand_qty_pivot = create_brand_pivot(combined_df)
                     asin_qty_pivot = create_asin_pivot(combined_df)
                     
@@ -515,6 +521,7 @@ if process_button:
                     seller_flex_asin = None
                     
                     if seller_flex_file and product_master_file:
+                        progress_text.text("📦 Processing Seller Flex data...")
                         seller_flex_df = pd.read_csv(seller_flex_file)
                         seller_flex_df = process_seller_flex(seller_flex_df, pm_df)
                         seller_flex_df = ensure_arrow_compatibility(seller_flex_df)
@@ -581,6 +588,7 @@ if process_button:
                             # but filtering numeric cols is safer if we did.
                     
                     # Create final summaries
+                    progress_text.text("📝 Generating final summaries...")
                     if fba_return_brand is not None and seller_flex_brand is not None:
                         brand_final = create_final_summary(
                             brand_qty_pivot,
@@ -632,7 +640,10 @@ if process_button:
                     if fba_disposition_pivot is not None:
                         fba_disposition_pivot = add_grand_total(fba_disposition_pivot)
 
-                    # Store results
+                    # Pre-calculate download data removed to save RAM
+                    # progress_text.text("💾 Preparing download files...")
+                    
+                    # Store results - NO raw_combined_csv here, it's too big
                     st.session_state.results = {
                         'combined_df': combined_df,
                         'raw_combined_df': raw_combined_df,
@@ -655,6 +666,10 @@ if process_button:
                             'total_sf_returns': int(total_sf_returns)
                         }
                     }
+                    del combined_df
+                    del raw_combined_df
+                    gc.collect()
+                    progress_text.text("✨ Almost done...")
                     st.session_state.processed = True
                     st.success("✅ Data processed successfully!")
                     # st.rerun()
@@ -703,15 +718,16 @@ if st.session_state.processed:
             if 'raw_combined_df' in results and results['raw_combined_df'] is not None:
                 # Use CSV for the raw data to prevent timeouts - No preview for huge datasets
                 
-                # Use CSV for the raw data to prevent timeouts
-                csv_data = convert_df_to_csv(results['raw_combined_df'])
-                st.download_button(
-                    label="📥 Download Raw Unfiltered CSV",
-                    data=csv_data,
-                    file_name="raw_combined_unfiltered_report.csv",
-                    mime="text/csv",
-                    use_container_width=True
-                )
+                # Generate CSV only when button is clicked (lazy)
+                raw_df = results.get('raw_combined_df')
+                if raw_df is not None:
+                    st.download_button(
+                        label="📥 Download Raw Unfiltered CSV",
+                        data=convert_df_to_csv(raw_df),
+                        file_name="raw_combined_unfiltered_report.csv",
+                        mime="text/csv",
+                        use_container_width=True
+                    )
                 st.caption("Note: Raw data is provided as CSV for faster processing and to prevent memory errors.")
             else:
                 st.warning("Raw combined data not available.")
