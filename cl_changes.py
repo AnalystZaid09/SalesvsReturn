@@ -169,7 +169,7 @@ def process_combined_data(combined_df):
     return combined_df
 
 def merge_product_master(df, pm_df):
-    """Merge combined data with product master"""
+    """Merge combined data with purchase master"""
     pm_cols = ["ASIN", "Brand", "Brand Manager", "Vendor SKU Codes", "CP"]
     pm_clean = pm_df[pm_cols].drop_duplicates(subset=["ASIN"]).copy()
     
@@ -206,7 +206,7 @@ def create_asin_pivot(df):
     ).reset_index().sort_values("Quantity", ascending=False)
 
 def create_asin_final_summary(asin_qty_pivot, fba_return_asin, seller_flex_asin, pm_df=None, fba_disposition_pivot=None):
-    """Create final ASIN summary with returns and product details from PM file"""
+    """Create final ASIN summary with returns and purchase details from PM file"""
     # Rename columns for FBA and Seller Flex
     if fba_return_asin is not None:
         fba_return_asin = fba_return_asin.rename(columns={"quantity": "FBA Return", "asin": "Asin"})
@@ -499,7 +499,7 @@ with col2:
     
     st.subheader("📋 Purchase Master (XLSX)")
     product_master_file = st.file_uploader(
-        "Upload Product Master Excel",
+        "Upload Purchase Master Excel",
         type=['xlsx', 'xls'],
         key='product_master'
     )
@@ -541,9 +541,9 @@ if process_button:
 
                     # Load product master
                     if product_master_file:
-                        progress_text.text("📂 Loading Product Master...")
+                        progress_text.text("📂 Loading Purchase Master...")
                         pm_df = pd.read_excel(product_master_file)
-                        progress_text.text("🔗 Merging Product details...")
+                        progress_text.text("🔗 Merging Purchase details...")
                         combined_df = merge_product_master(combined_df, pm_df)
                         
                     # Create pivots
@@ -886,7 +886,8 @@ if st.session_state.processed:
 st.markdown("---")
 st.markdown("""
     <div style='text-align: center; color: #6b7280; padding: 2rem;'>
-        <p>Upload your B2B/B2C reports, Seller Flex data, FBA returns, and Product Master to generate comprehensive analytics</p>
-        <p style='font-size: 0.875rem;'>Supported formats: ZIP (B2B/B2C), CSV (Seller Flex, FBA Return), XLSX (Product Master)</p>
+        <p>Upload your B2B/B2C reports, Seller Flex data, FBA returns, and Purchase Master to generate comprehensive analytics</p>
+        <p style='font-size: 0.875rem;'>Supported formats: ZIP (B2B/B2C), CSV (Seller Flex, FBA Return), XLSX (Purchase Master)</p>
     </div>
 """, unsafe_allow_html=True)
+
