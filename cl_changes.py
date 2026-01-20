@@ -676,15 +676,15 @@ if process_button:
                     if fba_disposition_pivot is not None:
                         fba_disposition_pivot = add_grand_total(fba_disposition_pivot)
 
-                    # Aggressive cleanup of raw data before storing results
-                    del raw_combined_df
+                    # Aggressive cleanup of local references
                     gc.collect()
 
-                    # Store results - AVOID storing large pre-computed byte arrays to prevent memory crash
-                    # We only store the DataFrames (pivots are small) and metrics.
-                    # combined_df is stored because it's needed for the "Combined Data" tab.
+                    # Store results
+                    # combined_df is stored because it's needed for analysis tabs.
+                    # raw_combined_df is stored because user requested raw data download.
                     st.session_state.results = {
                         'combined_df': combined_df,
+                        'raw_combined_df': raw_combined_df,
                         'brand_qty_pivot': brand_qty_pivot,
                         'asin_qty_pivot': asin_qty_pivot,
                         'asin_final': asin_final,
@@ -751,9 +751,17 @@ if st.session_state.processed:
             st.subheader("Raw Unfiltered Combined Data")
             raw_count = results.get('metrics', {}).get('raw_total_records', 0)
             st.info(f"This report contains all {raw_count:,} records without any filtering.")
-            # Raw data download is removed for memory stability on Streamlit Cloud.
-            st.warning("📥 Raw unfiltered data is cleared from memory to prevent cloud deployment crashes.")
-            st.info("Tip: Please use the individual filtered reports in the other tabs which are optimized for stability.")
+            
+            if 'raw_combined_df' in results and results['raw_combined_df'] is not None:
+                create_download_button(
+                    results['raw_combined_df'], 
+                    "raw_combined_unfiltered_report.csv", 
+                    "📥 Download Raw Unfiltered CSV", 
+                    is_csv=True
+                )
+                st.caption("Tip: CSV format is recommended for large raw datasets.")
+            else:
+                st.warning("Raw combined data not available.")
         with tab1:
             st.subheader("Filtered Transaction Data (Shipments Only)")
             st.dataframe(results['combined_df'].head(100), use_container_width=True)
