@@ -6,6 +6,8 @@ import gc
 from pathlib import Path
 import base64
 import traceback
+import tempfile
+import os
 
 # Page configuration
 st.set_page_config(
@@ -38,11 +40,16 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Helper Functions
-def read_zip_files(zip_files):
-    """Read and combine data from multiple zip files efficiently"""
-    all_data = []
+def read_zip_files_to_disk(zip_files):
+    """Read data from multiple zip files and write directly to a temp CSV on disk to save RAM."""
+    temp_csv = tempfile.NamedTemporaryFile(delete=False, suffix='.csv')
+    temp_path = temp_csv.name
+    temp_csv.close()
     
-    # Define common dtypes to save memory
+    first_file = True
+    total_count = 0
+    
+    # Define common dtypes to save memory during read
     dtypes = {
         "Transaction Type": "category",
         "Quantity": "float32",
@@ -51,13 +58,11 @@ def read_zip_files(zip_files):
     
     for zip_file in zip_files:
         try:
-            # zip_file is already a seekable file-like object in Streamlit
             with zipfile.ZipFile(zip_file, 'r') as z:
                 for file_name in z.namelist():
                     if file_name.endswith(('.xlsx', '.xls', '.csv')):
                         with z.open(file_name) as f:
                             if file_name.endswith('.csv'):
-                                # Read CSV with low_memory=True and dtypes
                                 df = pd.read_csv(f, low_memory=True, dtype=dtypes)
                             else:
                                 df = pd.read_excel(f, engine='openpyxl')
@@ -65,7 +70,7 @@ def read_zip_files(zip_files):
                             df["Source_Zip"] = zip_file.name
                             df["Source_File"] = file_name
                             
-                            # Normalize column names to Title Case and deduplicate
+                            # Normalize column names
                             new_cols = []
                             seen = {}
                             for c in df.columns:
@@ -78,17 +83,19 @@ def read_zip_files(zip_files):
                                     new_cols.append(base)
                             df.columns = new_cols
                             
-                            all_data.append(df)
+                            total_count += len(df)
+                            
+                            # Write to disk
+                            df.to_csv(temp_path, mode='a', index=False, header=first_file)
+                            first_file = False
+                            
+                            # Clear memory immediately
+                            del df
                             gc.collect()
         except Exception as e:
             st.warning(f"Could not read zip file {zip_file.name}: {str(e)}")
-    
-    if all_data:
-        combined = pd.concat(all_data, ignore_index=True, copy=False)
-        all_data.clear()
-        gc.collect()
-        return combined
-    return pd.DataFrame()
+            
+    return temp_path, total_count
 
 def add_grand_total(df):
     """Add a Grand Total row to the dataframe for numeric columns"""
@@ -169,7 +176,7 @@ def process_combined_data(combined_df):
     return combined_df
 
 def merge_product_master(df, pm_df):
-    """Merge combined data with purchase master"""
+    """Merge combined data with product master"""
     pm_cols = ["ASIN", "Brand", "Brand Manager", "Vendor SKU Codes", "CP"]
     pm_clean = pm_df[pm_cols].drop_duplicates(subset=["ASIN"]).copy()
     
@@ -206,7 +213,7 @@ def create_asin_pivot(df):
     ).reset_index().sort_values("Quantity", ascending=False)
 
 def create_asin_final_summary(asin_qty_pivot, fba_return_asin, seller_flex_asin, pm_df=None, fba_disposition_pivot=None):
-    """Create final ASIN summary with returns and purchase details from PM file"""
+    """Create final ASIN summary with returns and product details from PM file"""
     # Rename columns for FBA and Seller Flex
     if fba_return_asin is not None:
         fba_return_asin = fba_return_asin.rename(columns={"quantity": "FBA Return", "asin": "Asin"})
@@ -499,7 +506,7 @@ with col2:
     
     st.subheader("📋 Purchase Master (XLSX)")
     product_master_file = st.file_uploader(
-        "Upload Purchase Master Excel",
+        "Upload Product Master Excel",
         type=['xlsx', 'xls'],
         key='product_master'
     )
@@ -518,32 +525,56 @@ if process_button:
     else:
         with st.spinner("Processing your data..."):
             try:
+                # Cleanup old temp file if it exists in session state
+                if 'results' in st.session_state and 'raw_csv_path' in st.session_state.results:
+                    old_path = st.session_state.results['raw_csv_path']
+                    if os.path.exists(old_path):
+                        try: os.remove(old_path)
+                        except: pass
+
                 # Combine zip files
                 progress_text = st.empty()
-                progress_text.text("📚 Combining zip files...")
+                progress_text.text("📚 Combining zip files to disk...")
                 all_zip_files = (b2b_files or []) + (b2c_files or [])
-                combined_df = read_zip_files(all_zip_files)
+                temp_csv_path, raw_total_records = read_zip_files_to_disk(all_zip_files)
                 
-                # Store raw count and raw unfiltered df before any processing
-                raw_total_records = len(combined_df)
-                raw_combined_df = combined_df.copy()
-
-                if combined_df.empty:
+                # Check if we have data
+                if raw_total_records == 0:
                     st.error("No data found in the uploaded files.")
+                    if os.path.exists(temp_csv_path): os.remove(temp_csv_path)
                 else:
-                    # Process combined data
-                    progress_text.text("🔍 Filtering shipment transactions...")
-                    combined_df = process_combined_data(combined_df)
+                    # LOAD ONLY ESSENTIAL COLUMNS for analysis to save memory
+                    # We need enough columns for process_combined_data and pivots
+                    progress_text.text("🔍 Loading essential columns for analysis...")
                     
-                    progress_text.text("🛡️ Cleaning data for display...")
+                    # Columns needed for filtering and analysis
+                    essential_cols = [
+                        'Transaction Type', 'Quantity', 'Invoice Amount', 
+                        'Source_Zip', 'Source_File', 'Sku', 'Asin', 'Brand' # Normalized names
+                    ]
+                    
+                    try:
+                        # Attempt to load only essential columns. 
+                        # We use usecols but first check what's actually in the CSV.
+                        first_chunk = pd.read_csv(temp_csv_path, nrows=1)
+                        actual_cols = first_chunk.columns.tolist()
+                        available_essentials = [c for c in essential_cols if c in actual_cols]
+                        
+                        combined_df = pd.read_csv(temp_csv_path, usecols=available_essentials)
+                    except Exception:
+                        # Fallback to loading everything if usecols fails (e.g. column mismatch)
+                        combined_df = pd.read_csv(temp_csv_path)
+
+                    # Process combined data
+                    progress_text.text("⚙️ Filtering and cleaning shipment data...")
+                    combined_df = process_combined_data(combined_df)
                     combined_df = ensure_arrow_compatibility(combined_df)
-                    # Skip compatibility check for raw_combined_df to save time (we only need it for CSV download)
 
                     # Load product master
                     if product_master_file:
-                        progress_text.text("📂 Loading Purchase Master...")
+                        progress_text.text("📂 Loading Product Master...")
                         pm_df = pd.read_excel(product_master_file)
-                        progress_text.text("🔗 Merging Purchase details...")
+                        progress_text.text("🔗 Merging Product details...")
                         combined_df = merge_product_master(combined_df, pm_df)
                         
                     # Create pivots
@@ -681,10 +712,10 @@ if process_button:
 
                     # Store results
                     # combined_df is stored because it's needed for analysis tabs.
-                    # raw_combined_df is stored because user requested raw data download.
+                    # temp_csv_path is stored because user requested raw data download.
                     st.session_state.results = {
                         'combined_df': combined_df,
-                        'raw_combined_df': raw_combined_df,
+                        'raw_csv_path': temp_csv_path,
                         'brand_qty_pivot': brand_qty_pivot,
                         'asin_qty_pivot': asin_qty_pivot,
                         'asin_final': asin_final,
@@ -752,14 +783,17 @@ if st.session_state.processed:
             raw_count = results.get('metrics', {}).get('raw_total_records', 0)
             st.info(f"This report contains all {raw_count:,} records without any filtering.")
             
-            if 'raw_combined_df' in results and results['raw_combined_df'] is not None:
-                create_download_button(
-                    results['raw_combined_df'], 
-                    "raw_combined_unfiltered_report.csv", 
-                    "📥 Download Raw Unfiltered CSV", 
-                    is_csv=True
-                )
-                st.caption("Tip: CSV format is recommended for large raw datasets.")
+            # Disk-backed download to preserve RAM
+            if 'raw_csv_path' in results and os.path.exists(results['raw_csv_path']):
+                with open(results['raw_csv_path'], 'rb') as f:
+                    st.download_button(
+                        label="📥 Download Raw Unfiltered CSV",
+                        data=f,
+                        file_name="raw_combined_unfiltered_report.csv",
+                        mime="text/csv",
+                        use_container_width=True
+                    )
+                st.caption("Tip: This download is streamed from disk to prevent Cloud memory crashes.")
             else:
                 st.warning("Raw combined data not available.")
         with tab1:
@@ -863,6 +897,10 @@ if st.session_state.processed:
                         if df is not None:
                             # Use cached conversion function to save memory
                             zip_file.writestr(f"{name}.xlsx", convert_df_to_excel(df))
+                    
+                    # Add raw CSV from disk if available
+                    if 'raw_csv_path' in results and os.path.exists(results['raw_csv_path']):
+                        zip_file.write(results['raw_csv_path'], arcname="raw_combined_unfiltered_report.csv")
                 
                 st.session_state.zip_data = zip_buffer.getvalue()
                 gc.collect()
@@ -886,8 +924,7 @@ if st.session_state.processed:
 st.markdown("---")
 st.markdown("""
     <div style='text-align: center; color: #6b7280; padding: 2rem;'>
-        <p>Upload your B2B/B2C reports, Seller Flex data, FBA returns, and Purchase Master to generate comprehensive analytics</p>
-        <p style='font-size: 0.875rem;'>Supported formats: ZIP (B2B/B2C), CSV (Seller Flex, FBA Return), XLSX (Purchase Master)</p>
+        <p>Upload your B2B/B2C reports, Seller Flex data, FBA returns, and Product Master to generate comprehensive analytics</p>
+        <p style='font-size: 0.875rem;'>Supported formats: ZIP (B2B/B2C), CSV (Seller Flex, FBA Return), XLSX (Product Master)</p>
     </div>
 """, unsafe_allow_html=True)
-
