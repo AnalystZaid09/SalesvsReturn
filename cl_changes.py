@@ -420,22 +420,31 @@ def convert_df_to_excel(df):
             df.to_excel(writer, index=False, sheet_name='Sheet1')
     return output.getvalue()
 
+@st.cache_data(show_spinner=False)
 def convert_df_to_csv(df):
-    """Convert dataframe to CSV - much faster and lighter for raw data"""
+    """Convert dataframe to CSV - much faster and lighter for raw data. Cached."""
     return df.to_csv(index=False).encode('utf-8')
 
-def create_download_button(df, filename, button_text="📥 Download Excel", data=None):
-    """Create a download button. Uses pre-calculated data if provided to avoid RAM spikes."""
-    if data is None:
-        excel_data = convert_df_to_excel(df)
+def create_download_button(df, filename, button_text="📥 Download Excel", is_csv=False):
+    """
+    Create a download button. 
+    Uses cached conversion functions to avoid RAM spikes and session_state bloating.
+    """
+    if df is None:
+        return
+
+    if is_csv:
+        data = convert_df_to_csv(df)
+        mime = "text/csv"
     else:
-        excel_data = data
+        data = convert_df_to_excel(df)
+        mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
     st.download_button(
         label=button_text,
-        data=excel_data,
+        data=data,
         file_name=filename,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        mime=mime,
         use_container_width=True
     )
 
@@ -667,24 +676,15 @@ if process_button:
                     if fba_disposition_pivot is not None:
                         fba_disposition_pivot = add_grand_total(fba_disposition_pivot)
 
-                    # Pre-calculate download data to session state ONLY ONCE to stop crashes on redraw
-                    progress_text.text("💾 Preparing final analysis downloads (Excel)...")
-                    brand_final_excel = convert_df_to_excel(brand_final)
-                    asin_final_excel = convert_df_to_excel(asin_final)
-                    shipment_excel = convert_df_to_excel(combined_df)
-                    
-                    # Also pre-calculate other pivots
-                    brand_qty_excel = convert_df_to_excel(brand_qty_pivot)
-                    asin_qty_excel = convert_df_to_excel(asin_qty_pivot)
-                    
-                    progress_text.text("💾 Preparing raw data download (CSV)...")
-                    raw_csv = convert_df_to_csv(raw_combined_df)
+                    # Aggressive cleanup of raw data before storing results
+                    del raw_combined_df
+                    gc.collect()
 
-                    # Store results - AVOID storing large raw dataframes to prevent memory crash
-                    # Only store pivots and pre-computed downloads
+                    # Store results - AVOID storing large pre-computed byte arrays to prevent memory crash
+                    # We only store the DataFrames (pivots are small) and metrics.
+                    # combined_df is stored because it's needed for the "Combined Data" tab.
                     st.session_state.results = {
                         'combined_df': combined_df,
-                        # 'raw_combined_df': raw_combined_df,  # REMOVED - causes memory overflow
                         'brand_qty_pivot': brand_qty_pivot,
                         'asin_qty_pivot': asin_qty_pivot,
                         'asin_final': asin_final,
@@ -696,14 +696,6 @@ if process_button:
                         'fba_return_asin': fba_return_asin,
                         'fba_disposition_pivot': fba_disposition_pivot,
                         'brand_final': brand_final,
-                        'downloads': {
-                            'brand_final_excel': brand_final_excel,
-                            'asin_final_excel': asin_final_excel,
-                            'shipment_excel': shipment_excel,
-                            'brand_qty_excel': brand_qty_excel,
-                            'asin_qty_excel': asin_qty_excel,
-                            'raw_csv': raw_csv
-                        },
                         'metrics': {
                             'total_records': int(total_records),
                             'raw_total_records': int(raw_total_records),
@@ -712,15 +704,12 @@ if process_button:
                             'total_sf_returns': int(total_sf_returns)
                         }
                     }
-                    # Aggressive cleanup to prevent memory overflow on Streamlit Cloud
-                    del combined_df
-                    del raw_combined_df
-                    gc.collect()
-                    progress_text.text("✨ Almost done...")
+                    
                     st.session_state.processed = True
                     st.success("✅ Data processed successfully!")
-                    # st.rerun()
                     
+                    # Final cleanup of local references
+                    gc.collect()
             except Exception as e:
                 st.error(f"An error occurred during processing: {str(e)}")
                 st.code(traceback.format_exc())
@@ -762,47 +751,39 @@ if st.session_state.processed:
             st.subheader("Raw Unfiltered Combined Data")
             raw_count = results.get('metrics', {}).get('raw_total_records', 0)
             st.info(f"This report contains all {raw_count:,} records without any filtering.")
-            if 'downloads' in results and 'raw_csv' in results['downloads']:
-                st.download_button(
-                    label="📥 Download Raw Unfiltered CSV",
-                    data=results['downloads']['raw_csv'],
-                    file_name="raw_combined_unfiltered_report.csv",
-                    mime="text/csv",
-                    use_container_width=True
-                )
-                st.caption("� CSV format is recommended for large datasets. It's faster and more reliable on Streamlit Cloud.")
-            else:
-                st.warning("Raw combined data not available.")
-        
+            # Raw data download is removed for memory stability on Streamlit Cloud.
+            st.warning("📥 Raw unfiltered data is cleared from memory to prevent cloud deployment crashes.")
+            st.info("Tip: Please use the individual filtered reports in the other tabs which are optimized for stability.")
         with tab1:
             st.subheader("Filtered Transaction Data (Shipments Only)")
             st.dataframe(results['combined_df'].head(100), use_container_width=True)
-            create_download_button(results['combined_df'], "filtered_shipment_report.xlsx", "📥 Download Filtered Excel", data=results['downloads'].get('shipment_excel'))
+            create_download_button(results['combined_df'], "filtered_shipment_report.xlsx", "📥 Download Filtered Excel")
+            create_download_button(results['combined_df'], "filtered_shipment_report.csv", "📥 Download Filtered CSV", is_csv=True)
         
         with tab2:
             col1, col2 = st.columns(2)
             with col1:
                 st.subheader("Brand Quantity Pivot")
                 st.dataframe(results['brand_qty_pivot'], use_container_width=True)
-                create_download_button(results['brand_qty_pivot'], "brand_quantity_pivot.xlsx", data=results['downloads'].get('brand_qty_excel'))
+                create_download_button(results['brand_qty_pivot'], "brand_quantity_pivot.xlsx")
             
             with col2:
                 st.subheader("Brand Final Summary (with Returns)")
                 st.dataframe(results['brand_final'], use_container_width=True)
-                create_download_button(results['brand_final'], "brand_final_summary.xlsx", data=results['downloads'].get('brand_final_excel'))
+                create_download_button(results['brand_final'], "brand_final_summary.xlsx")
         
         with tab3:
             col1, col2 = st.columns(2)
             with col1:
                 st.subheader("ASIN Quantity Pivot")
                 st.dataframe(results['asin_qty_pivot'], use_container_width=True)
-                create_download_button(results['asin_qty_pivot'], "asin_quantity_pivot.xlsx", data=results['downloads'].get('asin_qty_excel'))
+                create_download_button(results['asin_qty_pivot'], "asin_quantity_pivot.xlsx")
             
             with col2:
                 if 'asin_final' in results and results['asin_final'] is not None:
                     st.subheader("ASIN Final Summary (with Returns)")
                     st.dataframe(results['asin_final'], use_container_width=True)
-                    create_download_button(results['asin_final'], "asin_final_summary.xlsx", data=results['downloads'].get('asin_final_excel'))
+                    create_download_button(results['asin_final'], "asin_final_summary.xlsx")
         
         with tab4:
             if results['seller_flex_df'] is not None:
@@ -857,21 +838,22 @@ if st.session_state.processed:
             with st.spinner("Creating ZIP file..."):
                 zip_buffer = io.BytesIO()
                 with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-                    downloads = results.get('downloads', {})
-                    for file_key, data in downloads.items():
-                        if data and file_key != 'raw_csv': # Skip raw csv for the excel zip
-                            zip_file.writestr(f"{file_key}.xlsx", data)
-                    
-                    # Add small pivots if not in downloads
-                    small_reports = {
+                    # Essential reports - generate Excel bytes on the fly (cached)
+                    essential_dfs = {
+                        'brand_final': results.get('brand_final'),
+                        'asin_final': results.get('asin_final'),
+                        'brand_qty_pivot': results.get('brand_qty_pivot'),
+                        'asin_qty_pivot': results.get('asin_qty_pivot'),
                         'seller_flex_brand': results.get('seller_flex_brand'),
                         'seller_flex_asin': results.get('seller_flex_asin'),
                         'fba_return_brand': results.get('fba_return_brand'),
                         'fba_return_asin': results.get('fba_return_asin'),
                         'fba_disposition': results.get('fba_disposition_pivot')
                     }
-                    for name, df in small_reports.items():
+                    
+                    for name, df in essential_dfs.items():
                         if df is not None:
+                            # Use cached conversion function to save memory
                             zip_file.writestr(f"{name}.xlsx", convert_df_to_excel(df))
                 
                 st.session_state.zip_data = zip_buffer.getvalue()
