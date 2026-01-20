@@ -2,10 +2,10 @@ import streamlit as st
 import pandas as pd
 import zipfile
 import io
+import gc
 from pathlib import Path
 import base64
 import traceback
-import gc
 
 # Page configuration
 st.set_page_config(
@@ -42,6 +42,13 @@ def read_zip_files(zip_files):
     """Read and combine data from multiple zip files efficiently"""
     all_data = []
     
+    # Define common dtypes to save memory
+    dtypes = {
+        "Transaction Type": "category",
+        "Quantity": "float32",
+        "Invoice Amount": "float32"
+    }
+    
     for zip_file in zip_files:
         try:
             # zip_file is already a seekable file-like object in Streamlit
@@ -50,8 +57,8 @@ def read_zip_files(zip_files):
                     if file_name.endswith(('.xlsx', '.xls', '.csv')):
                         with z.open(file_name) as f:
                             if file_name.endswith('.csv'):
-                                # Read CSV in chunks or with low_memory=True
-                                df = pd.read_csv(f, low_memory=False)
+                                # Read CSV with low_memory=True and dtypes
+                                df = pd.read_csv(f, low_memory=True, dtype=dtypes)
                             else:
                                 df = pd.read_excel(f, engine='openpyxl')
                             
@@ -399,14 +406,16 @@ def create_final_summary(brand_qty_pivot, brand_fba_pivot, brand_seller_pivot, f
 
     return result
 
+@st.cache_data(show_spinner=False)
 def convert_df_to_excel(df):
-    """Convert dataframe to excel bytes. Caching removed to save memory on large datasets."""
+    """Convert dataframe to excel bytes. Cached to prevent re-generation on every rerun."""
     output = io.BytesIO()
     # Try xlsxwriter for better performance, fallback to openpyxl
     try:
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        # Use xlsxwriter with constant_memory to reduce RAM usage for large sheets
+        with pd.ExcelWriter(output, engine='xlsxwriter', engine_kwargs={'options': {'constant_memory': True}}) as writer:
             df.to_excel(writer, index=False, sheet_name='Sheet1')
-    except:
+    except Exception:
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, index=False, sheet_name='Sheet1')
     return output.getvalue()
